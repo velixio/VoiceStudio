@@ -60,6 +60,18 @@ import torchaudio
 
 logger = logging.getLogger("omnivoice.audio_io")
 
+# torchaudio 2.9 requires TorchCodec for BOTH save and load; without that wheel
+# every call here raises. main.py installs libsndfile fallbacks at startup, but
+# this module is also imported directly (tests, sidecars, tools) where that
+# never runs — and it is the audited audio path, so it must not depend on
+# someone else having initialised first. Idempotent; no-op on < 2.9.
+try:
+    from core.torchaudio_compat import install_torchaudio_fallbacks
+    install_torchaudio_fallbacks()
+except Exception:
+    # Best-effort: the native torchaudio path may be perfectly fine.
+    pass
+
 # A WAV destination is either a filesystem path or a binary stream
 # (``io.BytesIO`` for in-memory responses). ``torchaudio.save`` accepts
 # both; we forward whichever the caller hands us.

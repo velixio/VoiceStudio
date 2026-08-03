@@ -249,6 +249,19 @@ warnings.filterwarnings("ignore", category=UserWarning)
 if hasattr(torchaudio, "set_audio_backend"):
     torchaudio.set_audio_backend("soundfile")
 
+# torchaudio 2.9 routes BOTH save and load through TorchCodec and hard-requires
+# it, so without that wheel every read and write raises and the app can neither
+# write a rendered clip nor read a cloning reference. Install libsndfile
+# fallbacks before anything touches audio. No-op on < 2.9 and when TorchCodec
+# is present; never raises.
+try:
+    from core.torchaudio_compat import install_torchaudio_fallbacks
+    install_torchaudio_fallbacks()
+except Exception:
+    # Best-effort by design: if the shim itself cannot load, the native
+    # torchaudio path is still there and may well be fine.
+    pass
+
 
 class _WindowsSafeRotatingFileHandler(RotatingFileHandler):
     def doRollover(self):
