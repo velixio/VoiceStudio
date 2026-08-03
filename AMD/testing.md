@@ -129,6 +129,56 @@ gfx1031` and `xnack 'Off' was requested for a processor that does not support it
 
 ---
 
+## 4.3 Audio correctness — A/B verified against CPU
+
+"Not silent and finite" is a weak bar, so the same sentence was synthesised on
+both devices and the output verified by **transcribing it back** — if Whisper
+reads the sentence we asked for, synthesis is genuinely correct.
+
+Text: `"The quick brown fox jumps over the lazy dog."`
+
+| | GPU (ROCm fp16) | CPU (fp32) |
+|---|---|---|
+| Generation time | **1.64 s** | **761.10 s** |
+| RTF | **0.586×** | 271.822× |
+| Duration | 2.80 s | 2.80 s |
+| Peak / RMS | 0.500 / 0.0646 | 0.500 / 0.0628 |
+| Clipped / NaN / DC | 0 / 0 / −0.00000 | 0 / 0 / +0.00004 |
+| Voiced frames | 71.4% | 67.0% |
+| Spectral centroid | 1532 Hz | 1692 Hz |
+| **Whisper transcript** | *exact match* | *exact match* |
+| **WER** | **0.0% PASS** | **0.0% PASS** |
+
+**GPU is 464× faster** on identical work, at identical output length.
+
+Acoustic comparison of the two renderings:
+
+```
+log-spectrogram correlation : +0.9026
+RMS envelope correlation    : +0.9620
+crest factor                : GPU 17.8 dB / CPU 18.0 dB
+waveform correlation        : +0.0294
+```
+
+The low *waveform* correlation is expected and is **not** a defect: OmniVoice is a
+diffusion model, so the two devices draw different RNG streams and produce
+different realisations of the same utterance. Sample-wise they diverge; spectrally,
+in envelope, in duration and in transcript they agree. That is the signature of two
+valid renderings, not a broken one. A bitwise GPU/CPU comparison would be the wrong
+test for this model class.
+
+Artifacts live in `AMD/samples/` (`sample_cuda.wav`, `sample_cpu.wav`). They are
+**left untracked deliberately** — binary output, regenerable via §9.
+
+### Bonus: ASR verified on ROCm too
+
+The Whisper model used for the check ran **on the AMD GPU** via the `transformers`
+pipeline. That independently validates the `PyTorchWhisperBackend` path
+(`asr_backend.py:1193`), whose comment currently reads *"ROCm-via-HIP would also
+work but is left unclaimed pending verification."* It is now verified on RDNA2.
+
+---
+
 ## 5. The one genuine Windows blocker — and its patch
 
 **Windows ROCm PyTorch ships without `torch.distributed`:**
