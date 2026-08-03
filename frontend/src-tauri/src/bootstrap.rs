@@ -981,7 +981,11 @@ fn rocm_default_index() -> &'static str {
 #[allow(dead_code)] // Windows two-phase install; also exercised by tests
 fn rocm_sdk_core_install_args(index_url: &str) -> Vec<String> {
     vec![
-        "pip".into(), "install".into(),
+        // Same `--no-config` reasoning as phase 2 below: this runs inside the
+        // project dir, and the project's constraint set has no opinion about
+        // rocm-sdk-core today but would silently start applying one the moment
+        // anything ROCm-shaped is added to it.
+        "pip".into(), "install".into(), "--no-config".into(),
         format!("rocm-sdk-core=={ROCM_WINDOWS_SDK}"),
         "--index-url".into(), index_url.into(),
     ]
@@ -989,9 +993,27 @@ fn rocm_sdk_core_install_args(index_url: &str) -> Vec<String> {
 
 /// Phase 2: the per-architecture torch + torchaudio install.
 #[allow(dead_code)] // Windows-only; also exercised by tests
+/// `--no-config` is load-bearing, not tidiness. These commands run with
+/// `current_dir(project_dir)`, so uv reads the project's
+/// `[tool.uv] constraint-dependencies = ["torch==2.8.0", "torchaudio==2.8.0"]`
+/// and refuses the install outright:
+///
+/// ```text
+/// x No solution found when resolving dependencies:
+///   +-> Because you require torchaudio==2.9.0+rocm7.13.0 and
+///       torchaudio==2.8.0, we can conclude that your requirements are
+///       unsatisfiable.
+/// ```
+///
+/// The Linux path never hits this: `whl/rocm6.4` carries the pinned 2.8.0, so
+/// the constraint is satisfied. Windows has no 2.8.0 ROCm build on any channel
+/// and MUST step off the pin, so the constraint has to be bypassed for exactly
+/// this command. The venv is deliberately left off-pin afterwards — that is
+/// what opting into ROCm on Windows *means* — and a later `uv sync` puts the
+/// CUDA/CPU default back.
 fn rocm_torch_reinstall_args_windows(index_url: &str, gfx: &str) -> Vec<String> {
     vec![
-        "pip".into(), "install".into(), "--reinstall".into(),
+        "pip".into(), "install".into(), "--no-config".into(), "--reinstall".into(),
         format!("torch[device-{gfx}]=={ROCM_WINDOWS_TORCH}"),
         format!("torchaudio=={ROCM_WINDOWS_TORCHAUDIO}"),
         "--index-url".into(), index_url.into(),
@@ -2265,6 +2287,25 @@ mod tests {
         // download.pytorch.org publishes NO win_amd64 ROCm wheels — pointing
         // Windows there is the #972 CPU-fallback bug in a new costume.
         assert!(!args[i + 1].contains("download.pytorch.org"));
+    }
+
+    #[test]
+    fn windows_rocm_install_bypasses_the_project_torch_pin() {
+        // Both phases run with current_dir(project_dir), so uv reads
+        // `[tool.uv] constraint-dependencies = ["torch==2.8.0", ...]` from
+        // pyproject.toml. Without --no-config the install dies with
+        // "No solution found ... requirements are unsatisfiable", because no
+        // 2.8.0 ROCm build exists for Windows on any channel. Verified against
+        // a real venv: fails without the flag, succeeds with it.
+        for args in [
+            rocm_torch_reinstall_args_windows(ROCM_TORCH_INDEX_WINDOWS, "gfx1031"),
+            rocm_sdk_core_install_args(ROCM_TORCH_INDEX_WINDOWS),
+        ] {
+            assert!(
+                args.iter().any(|a| a == "--no-config"),
+                "uv would apply the project's torch==2.8.0 constraint: {args:?}",
+            );
+        }
     }
 
     #[test]
