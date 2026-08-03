@@ -412,6 +412,17 @@ def _run_alembic_upgrade() -> None:
             return
         cfg = Config(ini)
         cfg.set_main_option("sqlalchemy.url", f"sqlite:///{DB_PATH}")
+        # alembic.ini's `script_location = backend/migrations` is relative, and
+        # alembic resolves it against the CWD — not against the ini we just
+        # took the trouble to locate absolutely. Any launcher that starts the
+        # backend from somewhere other than the repo root therefore died at
+        # startup with "Path doesn't exist: backend\migrations", which the
+        # migration guard (correctly) reports as a failed migration rather than
+        # a missing file. `tauri dev` is exactly such a launcher: it spawns the
+        # backend with cwd=frontend/src-tauri. Pin it to the same root.
+        cfg.set_main_option(
+            "script_location", os.path.join(root, "backend", "migrations")
+        )
         # In-app run: alembic.ini's logging section must not touch the live
         # app's logging. env.py's fileConfig() — even with
         # disable_existing_loggers=False — replaces the root logger's handlers

@@ -192,3 +192,30 @@ def test_startup_migration_leaves_app_logging_intact(tmp_path, monkeypatch):
     finally:
         root.removeHandler(marker)
         root.setLevel(prev_level)
+
+
+def test_migrations_run_from_a_foreign_cwd(tmp_path, monkeypatch):
+    """Migrations must not depend on the process's working directory.
+
+    fail-before/pass-after: `alembic.ini` declares
+    `script_location = backend/migrations`, and alembic resolves that against
+    the CWD — not against the ini, which `_run_alembic_upgrade` goes to the
+    trouble of locating absolutely. Any launcher starting the backend from
+    somewhere other than the repo root died on boot with
+    "Path doesn't exist: backend\migrations", surfaced (correctly, but
+    confusingly) as a failed migration. `tauri dev` is exactly such a
+    launcher: it spawns the backend with cwd=frontend/src-tauri.
+    """
+    import os
+    from core import db as db_module
+    from core.db import _run_alembic_upgrade
+
+    db = tmp_path / "cwd-independent.db"
+    _seed_user_db(db)
+    monkeypatch.setattr(db_module, "DB_PATH", str(db))
+
+    # Anywhere that is NOT the repo root; tmp_path is guaranteed to be.
+    monkeypatch.chdir(tmp_path)
+    assert not os.path.isdir("backend/migrations"), "cwd must not resolve it"
+
+    _run_alembic_upgrade()  # must not raise MigrationError
