@@ -239,7 +239,15 @@ except Exception:
     pass
 
 warnings.filterwarnings("ignore", category=UserWarning)
-torchaudio.set_audio_backend("soundfile")
+# torchaudio dropped the global backend selector: deprecated through 2.x and
+# GONE in 2.9, where the dispatcher picks a backend per-call and soundfile is
+# already preferred for the formats we read. Calling it unguarded is a hard
+# AttributeError at import — the whole backend fails to start, before any
+# route exists to report why. That is not hypothetical: the Windows AMD/ROCm
+# path installs torchaudio 2.9 (no 2.8 ROCm build exists for Windows on any
+# channel), so an opted-in AMD user hit exactly this.
+if hasattr(torchaudio, "set_audio_backend"):
+    torchaudio.set_audio_backend("soundfile")
 
 
 class _WindowsSafeRotatingFileHandler(RotatingFileHandler):
