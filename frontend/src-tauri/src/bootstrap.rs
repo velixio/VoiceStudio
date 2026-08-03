@@ -2307,9 +2307,12 @@ mod tests {
         std::env::remove_var("OMNIVOICE_TORCH_VARIANT");
         std::env::remove_var("OMNIVOICE_TORCH_INDEX");
         assert!(rocm_opt_in("auto").is_none(), "unset+auto → no ROCm (default CUDA/CPU path)");
+        // The default index is platform-dependent now: Linux pulls from
+        // download.pytorch.org, Windows from AMD's TheRock multi-arch channel
+        // (download.pytorch.org ships no win_amd64 ROCm wheels at all).
         assert_eq!(
             rocm_opt_in("rocm").as_deref(),
-            Some(ROCM_TORCH_INDEX),
+            Some(rocm_default_index()),
             "setup-screen config alone opts in"
         );
 
@@ -2317,7 +2320,7 @@ mod tests {
         assert!(rocm_opt_in("rocm").is_none(), "env var wins over config (explicit non-rocm)");
 
         std::env::set_var("OMNIVOICE_TORCH_VARIANT", "ROCm");
-        assert_eq!(rocm_opt_in("auto").as_deref(), Some(ROCM_TORCH_INDEX), "case-insensitive env opt-in → default index");
+        assert_eq!(rocm_opt_in("auto").as_deref(), Some(rocm_default_index()), "case-insensitive env opt-in → default index");
 
         std::env::set_var("OMNIVOICE_TORCH_INDEX", "https://example.test/rocm6.3");
         assert_eq!(rocm_opt_in("auto").as_deref(), Some("https://example.test/rocm6.3"), "index override honored");
