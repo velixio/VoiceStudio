@@ -17,6 +17,7 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
 - Linux AppImage: a blank white window on rolling distros (Mesa 26.1+) now starts normally
 - A failed audiobook chapter says why, instead of turning red and saying nothing
 - AMD GPUs are no longer told they are running on the CPU while they are running on the GPU
+- AMD Radeon GPUs can now be used for acceleration on Windows, not just Linux
 
 ### Changed
 
@@ -28,6 +29,7 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
 
 ### Added
 
+- **AMD GPU (ROCm) on Windows** — opt-in and experimental. Choose it on the first-run Compute card; the app detects your GPU architecture and installs the matching PyTorch build, or stays on CPU if it can't tell (#1228)
 - Settings → Privacy now has an **Invisible watermark** toggle. On by default, available to everyone, and it only affects audio generated after the change. (#1308)
 - A new opt-in crash-isolated TTS engine, so a native crash takes down the sidecar instead of the whole backend — thanks @paoloantinori! (#1292, #1298, #1304)
 

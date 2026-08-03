@@ -133,7 +133,7 @@ Three flagships, five more headliners, and a dozen under the fold.
 - 📦 **Batch Queue** — drop 50 videos, walk away; per-job progress bars.
 - 🛡️ **AI Watermark** — AudioSeal (Meta): invisible, survives compression.
 - 🔬 **Diagnostics** — self-check suite, error journal, scrubbed diagnostic bundles.
-- ⚡ **GPU Auto-Detect** — CUDA · MPS · ROCm (Linux, opt-in) · CPU; ≤8 GB VRAM auto-offloads.
+- ⚡ **GPU Auto-Detect** — CUDA · MPS · ROCm (Linux + Windows, opt-in) · CPU; ≤8 GB VRAM auto-offloads.
 - 🧭 **Engine routing** — preflight GPU check per engine; no silent CPU fallback.
 - 🧩 **Extensible** — subclass `TTSBackend`, add any engine in ~50 lines.
 - 🎒 **Portable personas** — export voices as `.ovsvoice` bundles: identity + watermark.
@@ -190,7 +190,7 @@ ElevenLabs charges **$5–$330/mo** and processes your audio on their servers. O
 | **Video Dubbing** | ✅ Cloud-only | ✅ Fully local |
 | **Data Privacy** | Audio sent to cloud | **Nothing leaves your machine** |
 | **API Keys** | Required | Not needed |
-| **GPU Support** | N/A (cloud) | CUDA · Apple Silicon · ROCm (Linux) · CPU |
+| **GPU Support** | N/A (cloud) | CUDA · Apple Silicon · ROCm (Linux + Windows) · CPU |
 | **Desktop App** | ❌ | ✅ macOS · Windows · Linux |
 | **TTS Engines** | 1 | **14** — [full matrix](#tts-engines) |
 | **ASR Engines** | 1 | **11** — [full lineup](#asr-engines) |
@@ -218,10 +218,10 @@ Professional-grade voice AI, minus the subscription and the cloud.
 | **VRAM (GPU)** | 4 GB (auto-offloads TTS to CPU) | 8 GB+ (NVIDIA RTX 3060+) |
 | **Disk** | 10 GB free (models + cache) | 20 GB+ SSD |
 | **Python** | 3.10+ (managed by `uv`) | 3.11–3.12 |
-| **GPU** | Optional — CPU works | NVIDIA CUDA · Apple Silicon MPS · AMD ROCm (Linux only) |
+| **GPU** | Optional — CPU works | NVIDIA CUDA · Apple Silicon MPS · AMD ROCm (Linux + Windows, opt-in) |
 
 > [!NOTE]
-> **A GPU is optional** — the whole pipeline runs on CPU (just slower), and on ≤8 GB VRAM, TTS auto-offloads to CPU. Caveats: **AMD ROCm** is Linux-only + opt-in ([Linux](docs/install/linux.md#amd-gpu-rocm)) — Windows AMD/Ryzen AI is CPU-only ([Windows](docs/install/windows.md#gpu-support)); **macOS Intel** can't run the local backend, so point it at a remote one ([#889](https://github.com/debpalash/OmniVoice-Studio/issues/889) · [macOS](docs/install/macos.md)).
+> **A GPU is optional** — the whole pipeline runs on CPU (just slower), and on ≤8 GB VRAM, TTS auto-offloads to CPU. Caveats: **AMD ROCm** is opt-in on both Linux ([Linux](docs/install/linux.md#amd-gpu-rocm)) and Windows, where it is experimental and AMD officially supports only RDNA3/RDNA4 ([Windows](docs/install/windows.md#amd-gpu-rocm)); the Ryzen AI NPU is unused; **macOS Intel** can't run the local backend, so point it at a remote one ([#889](https://github.com/debpalash/OmniVoice-Studio/issues/889) · [macOS](docs/install/macos.md)).
 
 <a id="tts-engines"></a>
 
@@ -317,7 +317,7 @@ A **Tauri v2** desktop shell (Rust) wraps a **React** UI and a bundled **Python/
 │  design   │  +10 more │  isolation│  diariz.  │  embed / detect    │
 ├───────────┴───────────┴───────────┴───────────┴────────────────────┤
 │  Engine routing — per-engine GPU preflight, no silent CPU fallback │
-│  Hardware:  CUDA · MPS · ROCm (Linux) · CPU   (auto-detected)      │
+│  Hardware:  CUDA · MPS · ROCm (Linux/Win) · CPU  (auto-detected)      │
 └────────────────────────────────────────────────────────────────────┘
 ```
 

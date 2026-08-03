@@ -889,6 +889,115 @@ fn sync_failure_is_torch_download(tail: &str) -> bool {
 /// distro-matched ROCm builds torch's own index doesn't carry).
 const ROCM_TORCH_INDEX: &str = "https://download.pytorch.org/whl/rocm6.4";
 
+/// Windows ROCm wheel index — AMD's TheRock "multi-arch" channel.
+///
+/// Deliberately NOT download.pytorch.org: that host publishes **zero**
+/// `win_amd64` ROCm wheels on any rocm index (verified across rocm6.3…7.2), so
+/// the Linux path above cannot work here. `repo.amd.com/rocm/whl-multi-arch/`
+/// is a real PEP 503 index (unlike `repo.radeon.com`, which is a flat
+/// directory listing needing full wheel URLs) and it ships kernels for far more
+/// architectures than the official wheels do — gfx1010‥gfx1036 (RDNA1/RDNA2),
+/// gfx1100‥gfx1103, gfx1150‥gfx1152 and gfx1200/gfx1201.
+///
+/// Two consequences the Linux path doesn't have:
+///   * **torch is pinned higher here.** No Windows ROCm build of the app's
+///     `torch==2.8.0` exists anywhere, so the reinstall targets 2.9.1. That is
+///     the whole reason this is opt-in and not a default.
+///   * **The wheel is selected per-architecture** via a `[device-gfxNNNN]`
+///     extra, so the exact gfx target has to be known before install — see
+///     `ROCM_GFX_PROBE_PY`.
+const ROCM_TORCH_INDEX_WINDOWS: &str = "https://repo.amd.com/rocm/whl-multi-arch/";
+
+/// Versions on the Windows ROCm channel. Kept together so a bump can't leave
+/// torch and torchaudio on mismatched ROCm builds (they must share the
+/// `+rocmX.Y.Z` local tag or the runtime DLLs disagree).
+const ROCM_WINDOWS_TORCH: &str = "2.9.1+rocm7.13.0";
+const ROCM_WINDOWS_TORCHAUDIO: &str = "2.9.0+rocm7.13.0";
+const ROCM_WINDOWS_SDK: &str = "7.13.0";
+
+/// Prints the installed GPU's gfx target (e.g. `gfx1031`), or nothing.
+///
+/// Why this exists: the Windows wheels are per-architecture, so we must know
+/// the target *before* installing torch — but AMD ships no Windows hardware
+/// detection at any layer. `rocm_bootstrap.detect` reads Linux KFD/DRM sysfs
+/// and returns an empty list here; `rocm-sdk targets` prints what the build
+/// supports, not what is plugged in. Mapping PCI device IDs ourselves would
+/// mean carrying a table that silently misfires on every new card.
+///
+/// Instead we ask the HIP runtime that `rocm-sdk-core` just installed. It
+/// answers for any card the wheels support, needs no system HIP SDK, and needs
+/// no table to maintain. `hipGetDevicePropertiesR0600` fills a struct whose
+/// `gcnArchName` is a NUL-terminated char array; we scan for the `gfx` prefix
+/// rather than mirroring the struct layout, which changes between ROCm
+/// releases. Any failure prints nothing and the caller aborts the ROCm path.
+#[allow(dead_code)] // Windows-only probe; referenced under cfg(windows)
+const ROCM_GFX_PROBE_PY: &str = r#"
+import ctypes, glob, os, sys
+try:
+    root = os.path.join(sys.prefix, "Lib", "site-packages", "_rocm_sdk_core")
+    dlls = glob.glob(os.path.join(root, "**", "amdhip64*.dll"), recursive=True)
+    if not dlls:
+        sys.exit(0)
+    os.add_dll_directory(os.path.dirname(dlls[0]))
+    hip = ctypes.CDLL(dlls[0])
+    count = ctypes.c_int()
+    if hip.hipGetDeviceCount(ctypes.byref(count)) != 0 or count.value < 1:
+        sys.exit(0)
+    fn = getattr(hip, "hipGetDevicePropertiesR0600", None) or getattr(
+        hip, "hipGetDeviceProperties", None)
+    if fn is None:
+        sys.exit(0)
+    props = ctypes.create_string_buffer(8192)
+    if fn(props, 0) != 0:
+        sys.exit(0)
+    raw = bytes(props)
+    i = raw.find(b"gfx")
+    if i >= 0:
+        print(raw[i:i + 32].split(b"\x00")[0].decode("ascii", "ignore").split(":")[0])
+except Exception:
+    pass
+"#;
+
+/// Is `s` a plausible gfx target (`gfx` + 3-5 hex chars, e.g. gfx1031, gfx90a)?
+/// Guards the value before it is interpolated into a pip requirement — the
+/// probe output is machine-generated, but it ends up in a command line.
+#[allow(dead_code)] // guards the Windows gfx probe + its tests
+fn is_valid_gfx(s: &str) -> bool {
+    let rest = match s.strip_prefix("gfx") {
+        Some(r) => r,
+        None => return false,
+    };
+    (3..=5).contains(&rest.len()) && rest.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Which ROCm wheel index this platform uses by default.
+fn rocm_default_index() -> &'static str {
+    if cfg!(target_os = "windows") { ROCM_TORCH_INDEX_WINDOWS } else { ROCM_TORCH_INDEX }
+}
+
+/// Phase 1 of the Windows ROCm install: pull just the ROCm runtime, so the gfx
+/// probe has a HIP library to ask. Not wasted work — `rocm-sdk-core` is a
+/// dependency of the torch wheel that lands in phase 2 either way.
+#[allow(dead_code)] // Windows two-phase install; also exercised by tests
+fn rocm_sdk_core_install_args(index_url: &str) -> Vec<String> {
+    vec![
+        "pip".into(), "install".into(),
+        format!("rocm-sdk-core=={ROCM_WINDOWS_SDK}"),
+        "--index-url".into(), index_url.into(),
+    ]
+}
+
+/// Phase 2: the per-architecture torch + torchaudio install.
+#[allow(dead_code)] // Windows-only; also exercised by tests
+fn rocm_torch_reinstall_args_windows(index_url: &str, gfx: &str) -> Vec<String> {
+    vec![
+        "pip".into(), "install".into(), "--reinstall".into(),
+        format!("torch[device-{gfx}]=={ROCM_WINDOWS_TORCH}"),
+        format!("torchaudio=={ROCM_WINDOWS_TORCHAUDIO}"),
+        "--index-url".into(), index_url.into(),
+    ]
+}
+
 /// Args for the routine update-drift sync (#307 path) — the one that runs on
 /// every app update when `uv.lock` changed. `--inexact` is the fix for #1029:
 /// plain `uv sync` UNINSTALLS every package not in the lockfile, which
@@ -914,6 +1023,7 @@ const REPAIR_SYNC_ARGS_UNLOCKED: [&str; 3] = ["sync", "--no-dev", "--verbose"];
 /// ROCm wheel (#124). Opt-in (gated on OMNIVOICE_TORCH_VARIANT=rocm by the
 /// caller); the detection side (`get_best_device`) already routes ROCm through
 /// `torch.cuda`, so installing the ROCm wheel is all that's needed.
+#[allow(dead_code)] // non-Windows path; also exercised by tests
 fn rocm_torch_reinstall_args(rocm_index_url: &str) -> Vec<String> {
     vec![
         "pip".into(), "install".into(), "--reinstall".into(),
@@ -933,7 +1043,44 @@ fn rocm_opt_in(configured_variant: &str) -> Option<String> {
     if !variant.eq_ignore_ascii_case("rocm") {
         return None;
     }
-    Some(std::env::var("OMNIVOICE_TORCH_INDEX").unwrap_or_else(|_| ROCM_TORCH_INDEX.to_string()))
+    Some(std::env::var("OMNIVOICE_TORCH_INDEX")
+        .unwrap_or_else(|_| rocm_default_index().to_string()))
+}
+
+/// The gfx target to install Windows ROCm wheels for.
+///
+/// `OMNIVOICE_ROCM_GFX` wins so a card newer than the runtime's own reporting
+/// — or one behind a quirky driver — is never a dead end. Otherwise ask the
+/// HIP runtime installed in phase 1 (`ROCM_GFX_PROBE_PY`). `None` means "do
+/// not proceed": installing the wrong architecture yields a torch that loads
+/// but has no kernels, which is strictly worse than staying on CPU.
+#[cfg(windows)]
+fn detect_rocm_gfx(python: &Path) -> Option<String> {
+    if let Ok(forced) = std::env::var("OMNIVOICE_ROCM_GFX") {
+        let forced = forced.trim().to_lowercase();
+        if is_valid_gfx(&forced) {
+            log::info!("ROCm: gfx target forced via OMNIVOICE_ROCM_GFX={forced}");
+            return Some(forced);
+        }
+        log::warn!("ROCm: ignoring malformed OMNIVOICE_ROCM_GFX={forced:?}");
+    }
+    let mut cmd = Command::new(python);
+    scrub_python_env(&mut cmd);
+    cmd.args(["-c", ROCM_GFX_PROBE_PY]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd.output().ok()?;
+    let gfx = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
+    if is_valid_gfx(&gfx) {
+        log::info!("ROCm: detected GPU architecture {gfx}");
+        Some(gfx)
+    } else {
+        log::warn!("ROCm: could not determine a gfx target (probe said {gfx:?})");
+        None
+    }
 }
 
 // ── #314: broken-venv detection + self-heal ────────────────────────────────
@@ -1889,10 +2036,51 @@ mirror in Settings → region/mirrors (see docs/install/troubleshooting.md).".to
     // than breaking first-run. Default (unset) leaves everything unchanged.
     if let Some(rocm_url) = rocm_opt_in(&user_cfg.torch_variant) {
         log::info!("ROCm torch variant selected → reinstalling torch from {}", rocm_url);
+
+        // Windows needs a two-phase install: the wheels are per-architecture,
+        // so pull the ROCm runtime first and ask it which gfx this GPU is
+        // before naming the torch extra. Linux's index is arch-agnostic and
+        // skips straight to the reinstall (path unchanged).
+        #[cfg(windows)]
+        let rocm_args = {
+            let mut sdk_cmd = Command::new(&uv_path);
+            scrub_python_env(&mut sdk_cmd);
+            apply_uv_env(app, &mut sdk_cmd);
+            sdk_cmd.args(rocm_sdk_core_install_args(&rocm_url)).current_dir(&project_dir);
+            let sdk_status = run_streaming(app, "installing_deps", &mut sdk_cmd);
+            if !matches!(sdk_status, Ok(ref s) if s.success()) {
+                log::warn!("ROCm SDK core install failed ({sdk_status:?}); keeping default torch");
+                emit_log(
+                    app, "installing_deps",
+                    "AMD ROCm setup failed while installing the ROCm runtime — \
+keeping the default torch build (the app still runs on CPU). \
+See docs/install/windows.md (AMD GPU) to install manually.",
+                );
+                return Some((venv_py, backend_dir));
+            }
+            match detect_rocm_gfx(&venv_py) {
+                Some(gfx) => rocm_torch_reinstall_args_windows(&rocm_url, &gfx),
+                None => {
+                    // Guessing an architecture would install a torch that
+                    // imports but has no kernels — worse than staying on CPU,
+                    // because it looks like it worked.
+                    emit_log(
+                        app, "installing_deps",
+                        "AMD ROCm setup could not identify your GPU architecture — \
+keeping the default torch build. Set OMNIVOICE_ROCM_GFX (e.g. gfx1100) and \
+re-run setup; see docs/install/windows.md (AMD GPU).",
+                    );
+                    return Some((venv_py, backend_dir));
+                }
+            }
+        };
+        #[cfg(not(windows))]
+        let rocm_args = rocm_torch_reinstall_args(&rocm_url);
+
         let mut rocm_cmd = Command::new(&uv_path);
         scrub_python_env(&mut rocm_cmd); // #144: don't inherit AppImage's bundled Python
         apply_uv_env(app, &mut rocm_cmd);
-        rocm_cmd.args(rocm_torch_reinstall_args(&rocm_url)).current_dir(&project_dir);
+        rocm_cmd.args(rocm_args).current_dir(&project_dir);
         let rocm_status = run_streaming(app, "installing_deps", &mut rocm_cmd);
         if matches!(rocm_status, Ok(ref s) if s.success()) {
             // The torch build just switched to ROCm: re-probe on the next
@@ -1903,8 +2091,13 @@ mirror in Settings → region/mirrors (see docs/install/troubleshooting.md).".to
             log::warn!("ROCm torch reinstall failed ({:?}); keeping default torch build", rocm_status);
             emit_log(
                 app, "installing_deps",
-                "ROCm torch reinstall failed — keeping the default torch build. \
-See docs/install/linux.md (AMD GPU) to install the ROCm wheel manually.",
+                if cfg!(windows) {
+                    "ROCm torch reinstall failed — keeping the default torch build. \
+See docs/install/windows.md (AMD GPU) to install the ROCm wheel manually."
+                } else {
+                    "ROCm torch reinstall failed — keeping the default torch build. \
+See docs/install/linux.md (AMD GPU) to install the ROCm wheel manually."
+                },
             );
         }
     }
@@ -2039,6 +2232,57 @@ mod tests {
             "Failed to download `numpy==2.0.0` from https://pypi.org/simple"
         ));
         assert!(!sync_failure_is_torch_download("some unrelated venv error"));
+    }
+
+    #[test]
+    fn is_valid_gfx_accepts_real_targets_and_rejects_junk() {
+        for good in ["gfx1031", "gfx1100", "gfx90a", "gfx906", "gfx1201", "gfx1151"] {
+            assert!(is_valid_gfx(good), "{good} should be valid");
+        }
+        for bad in [
+            "", "gfx", "gfx1", "gfx12", "gfx123456", "1031", "sm_89",
+            // The guard exists because this value is interpolated into a pip
+            // requirement — shell/argument metacharacters must never survive.
+            "gfx1031; rm -rf /", "gfx1031 --index-url http://evil", "gfx10$1",
+        ] {
+            assert!(!is_valid_gfx(bad), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn windows_rocm_args_pin_arch_extra_and_amd_index() {
+        let args = rocm_torch_reinstall_args_windows(ROCM_TORCH_INDEX_WINDOWS, "gfx1031");
+        assert!(args.contains(&"--reinstall".to_string()));
+        assert!(
+            args.iter().any(|a| a == "torch[device-gfx1031]==2.9.1+rocm7.13.0"),
+            "torch must carry the per-architecture extra: {args:?}",
+        );
+        // torch and torchaudio must share the ROCm local tag, or the bundled
+        // runtime DLLs disagree at import time.
+        assert!(args.iter().any(|a| a.starts_with("torchaudio==") && a.contains("+rocm7.13.0")));
+        let i = args.iter().position(|a| a == "--index-url").expect("index-url");
+        assert_eq!(args[i + 1], ROCM_TORCH_INDEX_WINDOWS);
+        // download.pytorch.org publishes NO win_amd64 ROCm wheels — pointing
+        // Windows there is the #972 CPU-fallback bug in a new costume.
+        assert!(!args[i + 1].contains("download.pytorch.org"));
+    }
+
+    #[test]
+    fn rocm_sdk_core_args_precede_arch_detection() {
+        let args = rocm_sdk_core_install_args(ROCM_TORCH_INDEX_WINDOWS);
+        assert!(args.iter().any(|a| a.starts_with("rocm-sdk-core==")));
+        // Phase 1 must NOT name a device extra — the whole point is that the
+        // architecture isn't known yet.
+        assert!(!args.iter().any(|a| a.contains("device-gfx")), "{args:?}");
+    }
+
+    #[test]
+    fn rocm_default_index_is_platform_correct() {
+        if cfg!(target_os = "windows") {
+            assert_eq!(rocm_default_index(), ROCM_TORCH_INDEX_WINDOWS);
+        } else {
+            assert_eq!(rocm_default_index(), ROCM_TORCH_INDEX);
+        }
     }
 
     #[test]

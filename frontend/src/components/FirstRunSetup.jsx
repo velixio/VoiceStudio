@@ -427,9 +427,10 @@ export default function FirstRunSetup() {
         .filter(Boolean)
         .join(' · ')
     : null;
-  // ROCm wheels are Linux-only — never offer a choice that can't work on
-  // this platform (Rust clamps it server-side too).
-  const rocmAvailable = setup.os === 'linux';
+  // ROCm wheels exist for Linux (download.pytorch.org) and Windows (AMD's
+  // TheRock multi-arch channel); macOS has none. Never offer a choice that
+  // can't work on this platform (Rust clamps it server-side too).
+  const rocmAvailable = setup.os === 'linux' || setup.os === 'windows';
 
   return (
     <div className="fixed inset-0 z-[9999] flex flex-col items-center overflow-hidden bg-bg px-6 pt-12 font-sans text-fg">
@@ -696,15 +697,22 @@ export default function FirstRunSetup() {
                     <OptionCard
                       active={plan.torchVariant === 'rocm'}
                       onSelect={() => set({ torchVariant: 'rocm' })}
-                      name={t('firstrun.compute_rocm', 'AMD GPU (ROCm, Linux)')}
+                      name={t('firstrun.compute_rocm', 'AMD GPU (ROCm)')}
                       desc={t(
                         'firstrun.compute_rocm_desc',
-                        'Installs PyTorch ROCm wheels for AMD graphics cards on Linux. Leave on Auto if unsure.',
+                        'Installs PyTorch ROCm wheels for AMD graphics cards. Leave on Auto if unsure.',
                       )}
                       badge={
+                        // 'rocm' = AMD GPU *and* ROCm userspace found (Linux).
+                        // 'amd' = AMD GPU found, but we can't confirm it will
+                        // work until install — offered, never pre-selected.
                         hw?.kind === 'rocm'
                           ? t('firstrun.compute_match', { defaultValue: 'matches this machine' })
-                          : null
+                          : hw?.kind === 'amd'
+                            ? t('firstrun.compute_amd_detected', {
+                                defaultValue: 'AMD GPU detected',
+                              })
+                            : null
                       }
                     />
                   )}

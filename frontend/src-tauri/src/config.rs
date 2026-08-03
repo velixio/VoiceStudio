@@ -71,7 +71,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub locale: Option<String>,
     /// "auto" (CUDA/MPS/CPU autodetect, default) | "rocm" (AMD wheel reinstall
-    /// after sync). Env var OMNIVOICE_TORCH_VARIANT still wins for power users.
+    /// after sync — Linux via download.pytorch.org, Windows via AMD's TheRock
+    /// multi-arch channel; clamped to "auto" on macOS, which has no ROCm
+    /// build). Env var OMNIVOICE_TORCH_VARIANT still wins for power users;
+    /// OMNIVOICE_ROCM_GFX forces the Windows architecture target.
     #[serde(default = "default_torch_variant")]
     pub torch_variant: String,
     /// Explicit mirror URLs that take precedence over region presets.

@@ -221,7 +221,8 @@ that picks these defaults automatically; for v0.3 set them by hand.
 
 <a id="amd-gpu-rocm"></a>
 
-ROCm support is **Linux-only and opt-in**. The **default install ships the
+ROCm support is **opt-in** (Windows has its own experimental path — see
+[windows.md — AMD GPU (ROCm)](windows.md#amd-gpu-rocm)). The **default install ships the
 CUDA build** of PyTorch (the `pytorch-cuda` index in `pyproject.toml`), so on
 an AMD-only machine `torch.cuda.is_available()` is `False` and OmniVoice runs
 on CPU until you opt into the ROCm variant.

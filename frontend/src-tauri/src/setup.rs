@@ -301,7 +301,7 @@ pub fn migrate_existing_install_if_needed<R: tauri::Runtime>(app: &tauri::AppHan
 pub struct SetupState {
     pub first_run: bool,
     /// "linux" | "macos" | "windows" — lets the UI hide platform-specific
-    /// opt-ins (e.g. the Linux-only ROCm torch variant) per the
+    /// opt-ins (e.g. the ROCm torch variant, which has no macOS build) per the
     /// cross-platform parity rule: identical defaults everywhere,
     /// platform-only choices never shown where they can't work.
     pub os: &'static str,
@@ -377,6 +377,55 @@ fn rocm_userspace_present() -> bool {
     std::env::var_os("PATH").is_some_and(|paths| {
         std::env::split_paths(&paths).any(|p| p.join("rocminfo").is_file())
     })
+}
+
+/// Marketing name of the first AMD display adapter on Windows, if any.
+///
+/// Mirrors the `nvidia-smi` helper above exactly — helper thread, short
+/// timeout, `CREATE_NO_WINDOW` — because this probe also sits inside the IPC
+/// the setup screen awaits on mount, and a wedged WMI provider must degrade to
+/// CPU rather than hang first-run.
+///
+/// Only the **vendor** is decided here (PCI `ven_1002`). The exact gfx target
+/// is deliberately NOT inferred from the device ID: that would mean carrying a
+/// PCI-ID table that silently misfires on every new card. The installer asks
+/// the HIP runtime instead (`bootstrap::ROCM_GFX_PROBE_PY`), which is correct
+/// for any card the wheels support and needs no maintenance.
+#[cfg(target_os = "windows")]
+fn amd_gpu_name_windows() -> Option<String> {
+    use std::process::Command;
+    // PNPDeviceID carries "PCI\VEN_1002&DEV_73DF&..."; Name is the marketing
+    // string. `-NoProfile` keeps a user's PowerShell profile off the path.
+    //
+    // Sorted by AdapterRAM descending because on an APU + discrete-GPU laptop
+    // the *integrated* adapter enumerates first, and naming the iGPU when a
+    // Radeon dGPU is present is actively misleading on the Compute card.
+    // AdapterRAM is 32-bit-truncated for large cards (a 12 GB board reports
+    // ~4 GB) — useless as a VRAM figure, but still ordered correctly against
+    // an iGPU's small carve-out, which is all this needs.
+    const PS: &str = "Get-CimInstance Win32_VideoController | \
+Where-Object { $_.PNPDeviceID -like 'PCI\\VEN_1002*' } | \
+Sort-Object -Property AdapterRAM -Descending | \
+Select-Object -First 1 -ExpandProperty Name";
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut ps = Command::new("powershell");
+        ps.args(["-NoProfile", "-NonInteractive", "-Command", PS]);
+        {
+            use std::os::windows::process::CommandExt;
+            ps.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let _ = tx.send(ps.output());
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(out)) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .next()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty()),
+        _ => None,
+    }
 }
 
 fn detect_hardware() -> HardwareInfo {
@@ -455,6 +504,24 @@ fn detect_hardware() -> HardwareInfo {
                     }
                 }
             }
+        }
+    }
+
+    // AMD on Windows: reported as "amd", never "rocm" — i.e. the Compute card
+    // OFFERS ROCm but does not pre-select it. Two reasons, both deliberate:
+    //   * Unlike Linux there is no userspace to probe (the ROCm runtime ships
+    //     inside the wheels), so "is it installed" isn't a question we can ask
+    //     to earn the confident "rocm" verdict.
+    //   * The Windows wheels come from AMD's TheRock channel and pin a higher
+    //     torch than the app does, and AMD's own Windows support matrix covers
+    //     only RDNA3/RDNA4 — RDNA2 works (verified on a Radeon RX 6800M,
+    //     gfx1031) but is not something to switch on for someone by default.
+    // The gfx target is resolved at install time, not here — see
+    // bootstrap::ROCM_GFX_PROBE_PY.
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(name) = amd_gpu_name_windows() {
+            return base(Some(name), "amd");
         }
     }
 
@@ -715,9 +782,12 @@ pub fn complete_setup(
         cfg.update_channel = channel.to_string();
     }
     if let Some(variant) = plan.torch_variant.as_deref().filter(|v| ["auto", "rocm"].contains(v)) {
-        // ROCm wheels exist for Linux only — clamp anywhere else so a stray
-        // payload can't configure an install that has no wheels to pull.
-        cfg.torch_variant = if variant == "rocm" && !cfg!(target_os = "linux") {
+        // ROCm wheels exist for Linux (download.pytorch.org) and Windows
+        // (AMD's TheRock multi-arch channel) — clamp on macOS, which has no
+        // ROCm build at all, so a stray payload can't configure an install
+        // with no wheels to pull.
+        let rocm_possible = cfg!(target_os = "linux") || cfg!(target_os = "windows");
+        cfg.torch_variant = if variant == "rocm" && !rocm_possible {
             "auto".to_string()
         } else {
             variant.to_string()

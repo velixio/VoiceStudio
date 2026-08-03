@@ -9,8 +9,9 @@ working OmniVoice Studio install on Windows 10 / 11 (x64).
 
 - **Windows 10 (21H2 or newer) or Windows 11**, x64.
 - **~10 GB free disk** for the app, its Python environment, and model weights.
-- Optional: an **NVIDIA GPU + driver** for CUDA acceleration — see
-  [GPU support on Windows](#gpu-support). AMD GPUs run CPU-only on Windows.
+- Optional: an **NVIDIA GPU + driver** for CUDA acceleration, or an **AMD
+  Radeon GPU** via the opt-in ROCm path — see
+  [GPU support on Windows](#gpu-support).
 
 That's it — Python, FFmpeg, and the model weights are bundled or bootstrapped
 by the app itself on first launch. No toolchain needed.
@@ -42,12 +43,41 @@ Everything above, plus the toolchain:
 ships the CUDA build of PyTorch; with an NVIDIA GPU and a regular NVIDIA
 driver it's picked up automatically (no CUDA Toolkit install needed).
 
-**AMD GPUs — including Ryzen / Ryzen AI integrated Radeon graphics — run
-CPU-only on Windows.** ROCm is not supported on Windows: PyTorch publishes no
-Windows ROCm wheels, and OmniVoice's ROCm option is Linux-only. (The Ryzen AI
-NPU is likewise not used.) Everything still works on CPU, just slower. If you
-have an AMD GPU and want GPU acceleration, run OmniVoice on Linux instead —
-see [linux.md — AMD GPU (ROCm)](linux.md#amd-gpu-rocm).
+<a id="amd-gpu-rocm"></a>
+
+### AMD GPU (ROCm) — opt-in, experimental
+
+**AMD Radeon GPUs can be GPU-accelerated on Windows via ROCm.** This is
+**opt-in and experimental**, and it is deliberately never selected for you.
+
+Pick **AMD GPU (ROCm)** on the first-run Compute card, or set
+`OMNIVOICE_TORCH_VARIANT=rocm` before launching. The app then:
+
+1. installs AMD's ROCm runtime (`rocm-sdk-core`),
+2. asks that runtime which GPU architecture you have (e.g. `gfx1031`), and
+3. installs the matching PyTorch build for it.
+
+If step 2 can't identify your card the app keeps the default CPU build rather
+than guessing — a wrong architecture produces a PyTorch that imports fine and
+then has no kernels, which is worse than CPU because it looks like it worked.
+Force it with `OMNIVOICE_ROCM_GFX=gfx1100` (use your own target) and re-run
+setup.
+
+**What you should know before enabling it:**
+
+- The wheels come from **AMD's own channel** (`repo.amd.com`), not from
+  `download.pytorch.org` — which publishes no Windows ROCm wheels at all.
+- They pin a **higher PyTorch version** than the app's default build. That is
+  why this is opt-in rather than automatic.
+- **AMD officially supports only RDNA3 / RDNA4** (RX 7000 / RX 9000) on
+  Windows. Older cards are not on AMD's support list, though the channel does
+  ship kernels for RDNA1/RDNA2 and they have been observed working — an RX
+  6800M (`gfx1031`) was verified end-to-end.
+- The **Ryzen AI NPU is not used** by OmniVoice.
+- Everything still works on CPU if you skip this, just slower.
+
+Prefer a fully supported setup? Linux ROCm is the better-trodden path — see
+[linux.md — AMD GPU (ROCm)](linux.md#amd-gpu-rocm).
 
 ## Install (from source)
 
