@@ -246,6 +246,48 @@ def test_preflight_amd_flags_warn_when_no_rocm_torch():
         assert any("rocm" in n.lower() for n in info["notes"])
 
 
+def test_preflight_detects_amd_on_windows_without_rocm_smi():
+    """Windows Radeon boxes must not be told they have no GPU.
+
+    fail-before/pass-after: the AMD branch gated entirely on `rocm-smi`, which
+    does not exist on Windows (AMD ships no rocm-smi/rocminfo/amd-smi there).
+    A Radeon host therefore fell through to the "no compatible GPU detected"
+    warning whose fix text says to check drivers — drivers that were fine. The
+    Windows adapter probe covers that case, and the note points at the ROCm
+    opt-in instead of at driver troubleshooting.
+    """
+    from api.routers.setup import wizard as setup_mod
+
+    def no_smi(args, timeout=2.0):
+        return -1, ""  # neither nvidia-smi nor rocm-smi resolves
+
+    with patch.object(setup_mod, "sys") as fake_sys,             patch.object(setup_mod, "_run_cmd", side_effect=no_smi),             patch.object(
+                setup_mod, "_amd_gpu_name_windows",
+                return_value="AMD Radeon RX 6800M",
+            ):
+        fake_sys.platform = "win32"
+        info = setup_mod._detect_gpu()
+
+    assert info["vendor"] == "amd", "a Radeon on Windows must not read as 'none'"
+    assert info["device_name"] == "AMD Radeon RX 6800M"
+    # torch here is the CUDA build, so the GPU is genuinely idle — the note has
+    # to name the ROCm opt-in, not send the user to their driver settings.
+    joined = " ".join(info["notes"]).lower()
+    assert "rocm" in joined
+    assert "driver" not in joined, "driver advice is the wrong fix for this host"
+
+
+def test_amd_windows_probe_is_noop_off_windows():
+    """The adapter probe must never shell out on Linux/macOS."""
+    from api.routers.setup import wizard as setup_mod
+
+    if sys.platform == "win32":
+        pytest.skip("this asserts the non-Windows short-circuit")
+    with patch.object(setup_mod, "_run_cmd") as spy:
+        assert setup_mod._amd_gpu_name_windows() is None
+        spy.assert_not_called()
+
+
 # ── Docker / container GPU fallback ──────────────────────────────────────
 
 def test_preflight_docker_gpu_fallback_detects_cuda():

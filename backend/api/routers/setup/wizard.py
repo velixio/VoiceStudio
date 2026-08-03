@@ -76,6 +76,37 @@ def _run_cmd(args: list[str], timeout: float = 2.0) -> tuple[int, str]:
         return -1, ""
 
 
+def _amd_gpu_name_windows() -> str | None:
+    """Driver-reported name of the first AMD display adapter on Windows.
+
+    Windows has no rocm-smi/rocminfo, so vendor detection goes through the
+    PCI vendor id (``VEN_1002``) on the display adapters instead. Sorted by
+    AdapterRAM descending because on an APU + discrete-GPU laptop the
+    integrated Radeon enumerates first, and naming the iGPU when a real dGPU
+    is present is worse than saying nothing. (AdapterRAM is 32-bit-truncated
+    for large cards, so it is useless as a VRAM figure but still orders a
+    dGPU above an iGPU's carve-out, which is all this needs.)
+
+    Mirrors ``setup.rs::amd_gpu_name_windows`` on the Rust side — the two
+    answer the same question for the wizard UI and for this preflight.
+    """
+    if sys.platform != "win32":
+        return None
+    ps = (
+        "Get-CimInstance Win32_VideoController | "
+        "Where-Object { $_.PNPDeviceID -like 'PCI\\VEN_1002*' } | "
+        "Sort-Object -Property AdapterRAM -Descending | "
+        "Select-Object -First 1 -ExpandProperty Name"
+    )
+    rc, out = _run_cmd(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], timeout=6.0
+    )
+    if rc != 0:
+        return None
+    name = out.strip().splitlines()[0].strip() if out.strip() else ""
+    return name[:120] or None
+
+
 def _detect_gpu() -> dict:
     """Best-effort detection of GPU vendor + driver + compute backend."""
     info = {
@@ -126,11 +157,17 @@ def _detect_gpu() -> dict:
             pass
         return info
 
-    # AMD
+    # AMD. `rocm-smi` is the Linux probe; it does NOT exist on Windows (AMD
+    # ships no rocm-smi/rocminfo/amd-smi there), so a Windows Radeon box used
+    # to fall through to "no GPU detected" and be told to check drivers that
+    # were perfectly fine. `_amd_gpu_name_windows()` covers that case.
     rc, out = _run_cmd(["rocm-smi", "--showproductname"])
-    if rc == 0 and out.strip():
+    amd_name = out.strip().splitlines()[0][:120] if (rc == 0 and out.strip()) else None
+    if amd_name is None:
+        amd_name = _amd_gpu_name_windows()
+    if amd_name:
         info["vendor"] = "amd"
-        info["device_name"] = out.strip().splitlines()[0][:120]
+        info["device_name"] = amd_name
         try:
             import torch
             has_hip = getattr(torch.version, "hip", None) is not None
@@ -139,11 +176,23 @@ def _detect_gpu() -> dict:
                 info["available"] = True
             else:
                 info["backend"] = "cpu"
-                info["notes"].append(
-                    "AMD GPU detected but torch was installed with CUDA wheels. "
-                    "Re-run `uv sync --index-url https://download.pytorch.org/whl/rocm6.1` "
-                    "to enable ROCm acceleration."
-                )
+                # The default install ships the CUDA build, so an AMD-only host
+                # legitimately has torch.cuda.is_available() == False. Point at
+                # the opt-in that fixes it rather than at driver troubleshooting.
+                if sys.platform == "win32":
+                    info["notes"].append(
+                        "AMD GPU detected but torch is the CUDA build, so the GPU "
+                        "is unused. Choose 'AMD GPU (ROCm)' in first-run setup, or "
+                        "set OMNIVOICE_TORCH_VARIANT=rocm and relaunch, to install "
+                        "the ROCm build. Experimental on Windows."
+                    )
+                else:
+                    info["notes"].append(
+                        "AMD GPU detected but torch was installed with CUDA wheels. "
+                        "Choose 'AMD GPU (ROCm)' in first-run setup, or re-run "
+                        "`uv pip install --reinstall torch torchaudio --index-url "
+                        "https://download.pytorch.org/whl/rocm6.4`, to enable ROCm."
+                    )
         except Exception:
             info["notes"].append("AMD GPU detected but torch not importable.")
         return info
@@ -423,16 +472,29 @@ def preflight():
             "by continuing past this step — dubbing will be ~10× slower."
         )
     elif gpu["vendor"] == "amd":
-        gpu_status = "warn"
+        # A configured ROCm host is a working GPU host — say "pass", not "warn".
+        # Warning at someone whose GPU is running fine trains them to ignore
+        # the check.
+        gpu_status = "pass" if gpu["available"] else "warn"
         gpu_detail = (
             f"{gpu['device_name']} — ROCm "
             + ("ready" if gpu["available"] else "not configured")
         )
+        # rocm6.4, NOT rocm6.1: rocm6.1 tops out at torch 2.6 and cannot satisfy
+        # the app's pinned torch==2.8.0, so following that instruction silently
+        # left the CUDA build in place and the GPU unused (the #972 shape).
+        # Windows uses AMD's own channel — download.pytorch.org publishes no
+        # win_amd64 ROCm wheels at all.
         gpu_fix = (
             None if gpu["available"] else
-            "AMD support is experimental. Re-run `uv sync --index-url "
-            "https://download.pytorch.org/whl/rocm6.1` to enable. App works "
-            "on CPU otherwise (slower)."
+            "Choose 'AMD GPU (ROCm)' in first-run setup, or set "
+            "OMNIVOICE_TORCH_VARIANT=rocm and relaunch, to install the ROCm "
+            "build. Experimental on Windows. App works on CPU otherwise (slower)."
+            if sys.platform == "win32" else
+            "Choose 'AMD GPU (ROCm)' in first-run setup, or re-run `uv pip "
+            "install --reinstall torch torchaudio --index-url "
+            "https://download.pytorch.org/whl/rocm6.4`, to enable ROCm. App "
+            "works on CPU otherwise (slower)."
         )
     elif gpu["available"]:
         # Fallback: torch.cuda works but nvidia-smi/rocm-smi absent (e.g. Docker)
