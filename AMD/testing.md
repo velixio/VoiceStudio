@@ -1,8 +1,57 @@
 # Phase 5 — AMD GPU Test Results (Windows / ROCm)
 
-**Date:** 2026-08-03
+**Date:** 2026-08-03 (superseded 2026-08-04 — see the stability warning below)
 **Branch:** `feat/amd-windows-rocm-support`
-**Status:** Windows AMD validated end-to-end. Linux/Docker untested here (no hardware).
+**Status:** ⛔ **RDNA2-on-Windows is NOT usable.** Functionally correct, but it
+hard-resets the host under sustained load. Linux/Docker untested here (no hardware).
+
+---
+
+## ⛔ 0. STABILITY WARNING — RDNA2 (gfx1031) on Windows hard-resets the machine
+
+**Do not use, and do not recommend, the Windows ROCm path on RDNA2.**
+
+Everything measured in §3 and §4 below is real and reproducible: the model
+loads, synthesis is numerically correct, the Whisper round-trip is 0% WER, and
+the GPU is ~464× faster than CPU. **That was all measured in short bursts.**
+
+Under *sustained* real use — generating from the app rather than a scripted
+one-shot — the host **powered off and rebooted, four times**. Windows logged:
+
+| Signal | Result |
+|---|---|
+| Unexpected shutdown (event 6008) | **3 logged** |
+| BugCheck (event 1001) | **none** |
+| Kernel-Power (event 41) | **none** |
+| WHEA / display-driver events | **none** |
+| Crash dump | **none written** |
+
+A driver fault writes a bugcheck and a dump. Nothing was written at all, which
+means the machine lost power instantly rather than blue-screening. On a *mobile*
+RX 6800M that is the signature of **power delivery or an over-current/thermal
+protection trip** under sustained compute — a hardware limit, not something any
+amount of application code can catch or recover from.
+
+**This is exactly the risk AMD's support matrix encodes.** AMD lists only
+RDNA3/RDNA4 for Windows ROCm; RDNA2 is absent. The wheels exist on TheRock's
+multi-arch channel and they *run*, which is what made this look supportable. It
+is not. An omission from a vendor support matrix is a claim about stability
+under load, and short benchmarks cannot falsify it.
+
+**Correction to the original write-up:** this document previously said Windows
+AMD was "validated end-to-end". That over-generalised from passing short tests.
+The honest statement is: *correct, fast, and unstable enough to reset the host.*
+
+Contributing factor worth noting for anyone retesting: the test machine's
+Adrenalin driver was from **2021-12-15**, four years older than the 26.2.2+ that
+every ROCm-on-Windows requirement specifies. That alone disqualifies the
+configuration; it does not explain a power cut, but it must be fixed before any
+retest is meaningful.
+
+**If you are retesting this, do it on RDNA3/RDNA4 with a current driver, on AC
+power, watching temperatures — and expect to lose the machine mid-run.**
+
+---
 
 ---
 

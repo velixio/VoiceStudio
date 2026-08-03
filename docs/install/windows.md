@@ -70,11 +70,20 @@ setup.
 - They pin a **higher PyTorch version** than the app's default build. That is
   why this is opt-in rather than automatic.
 - **AMD officially supports only RDNA3 / RDNA4** (RX 7000 / RX 9000) on
-  Windows. Older cards are not on AMD's support list, though the channel does
-  ship kernels for RDNA1/RDNA2 and they have been observed working — an RX
-  6800M (`gfx1031`) was verified end-to-end.
+  Windows — use one of those, and nothing older.
+- ⛔ **Do not use this on RDNA2 (RX 6000) or older.** AMD's channel does ship
+  kernels for those cards and they *appear* to work — synthesis is fast and
+  the output is correct — but under sustained load an RX 6800M (`gfx1031`)
+  **powered the machine off and rebooted it, repeatedly**. Windows wrote no
+  bugcheck and no crash dump, i.e. instant power loss rather than a driver
+  fault; on a mobile GPU that points at a power/thermal protection trip. The
+  app cannot detect or prevent this. Cards missing from AMD's support matrix
+  are missing for a reason.
+- Requires **Adrenalin 26.2.2 or newer**. An older driver is not a
+  "probably fine" — it is out of spec for every ROCm-on-Windows requirement.
 - The **Ryzen AI NPU is not used** by OmniVoice.
-- Everything still works on CPU if you skip this, just slower.
+- Everything still works on CPU if you skip this, just slower — and on an
+  unsupported card, CPU is the *correct* choice, not a consolation prize.
 
 Prefer a fully supported setup? Linux ROCm is the better-trodden path — see
 [linux.md — AMD GPU (ROCm)](linux.md#amd-gpu-rocm).
