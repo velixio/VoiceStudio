@@ -150,12 +150,18 @@ def test_omnivoice_entry_has_in_process_isolation_mode(fresh_app):
     assert by_id["omnivoice"]["isolation_mode"] == "in-process"
 
 
-def test_gpu_compat_omnivoice_has_cuda_mps_cpu(fresh_app):
-    """OmniVoice ships with CUDA/MPS/CPU paths — surface that in the matrix."""
+def test_gpu_compat_omnivoice_has_cuda_rocm_mps_cpu(fresh_app):
+    """OmniVoice ships with CUDA/ROCm/MPS/CPU paths — surface that in the matrix.
+
+    ``rocm`` joined 2026-08-03 after end-to-end verification on an RX 6800M
+    (gfx1031): without it, resolve_routing() reported ``cpu_fallback`` on every
+    AMD host and warned on every generation, while ``get_best_device()`` had
+    already put the model on the GPU (AMD/testing.md §7).
+    """
     client = _client(fresh_app)
     r = client.get("/engines")
     by_id = {b["id"]: b for b in r.json()["tts"]["backends"]}
-    assert set(by_id["omnivoice"]["gpu_compat"]) == {"cuda", "mps", "cpu"}
+    assert set(by_id["omnivoice"]["gpu_compat"]) == {"cuda", "rocm", "mps", "cpu"}
 
 
 # ── select_engine host-routing gate (no silent CPU fallback) ────────────────

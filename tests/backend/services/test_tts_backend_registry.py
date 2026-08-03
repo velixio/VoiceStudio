@@ -374,3 +374,50 @@ def test_supports_cloning_true_false_and_model_dependent(registry_sandbox):
     # descriptor object itself is always truthy, so passing it through would
     # be a false "clones" claim (same guard as cloning_capable_engine_ids).
     assert out["mlx-audio"]["supports_cloning"] is None
+
+
+# ── ROCm claims on shipped engines (AMD/testing.md) ───────────────────────
+# Before 2026-08-03 no engine declared "rocm", so engine_routing sent every AMD
+# host down the cpu_fallback branch and warned "running on CPU" on EVERY
+# generation — while get_best_device() returned "cuda" (ROCm presents through
+# torch.cuda) and the model really was on the GPU. Measured on an RX 6800M
+# (gfx1031): 1.64s vs 761s on CPU, a 464x difference.
+
+def test_in_process_torch_engines_declare_rocm():
+    """Engines whose runtime is in-process, device-agnostic PyTorch keep `rocm`.
+
+    ROCm-on-HIP runs the identical torch.cuda code path, so an engine that
+    reaches CUDA reaches HIP. Guards against a revert re-introducing the
+    false CPU warning on AMD hosts.
+    """
+    for engine_id in ("omnivoice", "voxcpm2", "moss-tts-nano", "cosyvoice"):
+        compat = tts_backend._REGISTRY[engine_id].gpu_compat
+        assert "rocm" in compat, f"{engine_id} lost its rocm claim"
+        assert "cuda" in compat, f"{engine_id} must keep cuda alongside rocm"
+
+    # The crash-isolated OmniVoice variant runs the same model on the PARENT's
+    # interpreter (venv_python() is sys.executable), so its tuple must not
+    # drift from OmniVoiceBackend's.
+    sub = tts_backend._REGISTRY.get("omnivoice-subprocess")
+    if sub is not None:
+        assert set(sub.gpu_compat) == set(
+            tts_backend._REGISTRY["omnivoice"].gpu_compat
+        ), "omnivoice-subprocess drifted from omnivoice"
+
+
+def test_dedicated_venv_engines_do_not_claim_rocm():
+    """Sidecar engines with their OWN venv must NOT claim `rocm`.
+
+    Their venv installs its own torch, which the ROCm opt-in reinstall never
+    touches — the claim would be a false promise even on a correctly configured
+    AMD host. `omnivoice-subprocess` is deliberately NOT in this list: its
+    `venv_python()` is `sys.executable`, so it inherits the parent's torch.
+    """
+    for engine_id in ("indextts2", "confucius4-tts", "dots-tts", "moss-tts-v15"):
+        cls = tts_backend._REGISTRY.get(engine_id)
+        if cls is None:                     # engine not registered in this build
+            continue
+        assert "rocm" not in cls.gpu_compat, (
+            f"{engine_id} runs in a dedicated venv; claiming rocm promises a "
+            f"GPU path its own torch build may not have"
+        )

@@ -281,9 +281,13 @@ class ASRBackend(ABC):
     # TTSBackend.gpu_compat contract so engine_routing.resolve_routing() can
     # surface the effective device per host (no silent CPU fallback). The
     # conservative default is CPU-only; subclasses declare what they really run
-    # on. (ROCm is intentionally NOT claimed yet for any ASR engine — see the
-    # per-engine notes; an unverified `rocm` claim would route ROCm hosts to a
-    # broken GPU path, strictly worse than the honest `cpu_fallback`.)
+    # on. (ROCm is claimed ONLY where the engine is device-agnostic PyTorch in
+    # this process — currently pytorch-whisper, verified on gfx1031. The
+    # CTranslate2 engines (whisperx, faster-whisper) stay unclaimed because the
+    # pinned ctranslate2 4.4.0 has no HIP build; NeMo stays unclaimed because it
+    # is actively broken on ROCm; sherpa/moonshine are CPU runtimes. An
+    # unverified `rocm` claim would route ROCm hosts to a broken GPU path,
+    # strictly worse than the honest `cpu_fallback`.)
     gpu_compat: tuple[str, ...] = ("cpu",)
 
     @classmethod
@@ -1188,9 +1192,11 @@ class MLXWhisperBackend(ASRBackend):
 class PyTorchWhisperBackend(ASRBackend):
     id = "pytorch-whisper"
     display_name = "PyTorch Whisper (CUDA / CPU via transformers pipeline)"
-    # Pure transformers pipeline → runs wherever torch does (CUDA, MPS, CPU).
-    # ROCm-via-HIP would also work but is left unclaimed pending verification.
-    gpu_compat = ("cuda", "mps", "cpu")
+    # Pure transformers pipeline → runs wherever torch does (CUDA, ROCm, MPS,
+    # CPU). ROCm is no longer "pending verification": whisper-small was run
+    # through this exact pipeline on an RX 6800M (gfx1031) under Windows and
+    # transcribed OmniVoice output at 0% WER (AMD/testing.md §4.3).
+    gpu_compat = ("cuda", "rocm", "mps", "cpu")
 
     def __init__(self, asr_pipe=None):
         # Reuses the `_asr_pipe` attached to the TTS model when available.

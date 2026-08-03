@@ -16,10 +16,15 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
 - macOS support now matches what the app actually delivers
 - Linux AppImage: a blank white window on rolling distros (Mesa 26.1+) now starts normally
 - A failed audiobook chapter says why, instead of turning red and saying nothing
+- AMD GPUs are no longer told they are running on the CPU while they are running on the GPU
 
 ### Changed
 
 - macOS floor raised to 13.3 (Ventura) — the frontend has required Safari 16.4 for some time, so macOS 12 was a promise the stack could not keep (#1268)
+
+### Fixed
+
+- AMD (ROCm) hosts: OmniVoice, VoxCPM2, MOSS-TTS-Nano, CosyVoice and PyTorch Whisper now report **ROCm** in the engine matrix instead of "running on CPU" — the models were already on the GPU, only the metadata was wrong, so every generation carried a false slow-CPU warning (#1228)
 
 ### Added
 

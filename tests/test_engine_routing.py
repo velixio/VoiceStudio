@@ -89,6 +89,29 @@ def test_rocm_host_cuda_only_engine_falls_back_with_specific_reason():
     assert r["routing_reason"] == "declares CUDA only; ROCm not in its compat set"
 
 
+# ── Regression: AMD hosts were told they were on CPU while using the GPU ──
+def test_rocm_claiming_engine_is_accelerated_not_cpu_fallback():
+    """An engine that declares ``rocm`` must route to the GPU on an AMD host.
+
+    Before 2026-08-03 no engine declared ``rocm``, so every AMD host hit the
+    ``cpu_fallback`` branch above and ``routing_notice()`` warned "running on
+    CPU" on EVERY generation — while ``get_best_device()`` returned "cuda"
+    (ROCm presents through torch.cuda) and the model really was on the GPU.
+    Measured on an RX 6800M: 1.64s vs 761s on CPU, 464x (AMD/testing.md §4.3).
+    """
+    r = resolve_routing(("cuda", "rocm", "mps", "cpu"), _caps("rocm"))
+    assert r == {"effective_device": "rocm", "routing_status": "accelerated",
+                 "routing_reason": None}
+    # The user-visible warning must disappear entirely — that was the bug.
+    assert routing_notice(r) is None
+
+# NOTE: the companion tests asserting which SHIPPED engines declare `rocm` live
+# in tests/backend/services/test_tts_backend_registry.py. They need the real
+# registry, and importing `services.tts_backend` from this module would leave it
+# in sys.modules and break the DB-isolation purge other suites rely on — this
+# file is deliberately a pure function-level suite over (gpu_compat, HostCaps).
+
+
 def test_xpu_host_cpu_engine_falls_back():
     r = resolve_routing(("cuda", "cpu"), _caps("xpu"))
     assert r["routing_status"] == "cpu_fallback"

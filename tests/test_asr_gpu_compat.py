@@ -18,7 +18,9 @@ _EXPECTED = {
     "whisperx": ("cuda", "cpu"),
     "faster-whisper": ("cuda", "cpu"),
     "mlx-whisper": ("mps", "cpu"),
-    "pytorch-whisper": ("cuda", "mps", "cpu"),
+    # rocm claimed 2026-08-03: verified on an RX 6800M (gfx1031) under Windows
+    # — whisper-small ran through this pipeline on HIP at 0% WER.
+    "pytorch-whisper": ("cuda", "rocm", "mps", "cpu"),
     "nemo-parakeet": ("cuda", "cpu"),
     # MLX runs on Apple Silicon's unified-memory GPU only; is_available
     # hard-gates on mlx_supported(), so claiming cpu would be false.
@@ -64,10 +66,28 @@ def test_compat_values_are_valid(engine_id):
         assert "cpu" not in compat  # would be a false claim — is_available gates on CUDA
 
 
-def test_no_asr_engine_falsely_claims_rocm():
-    # ROCm is intentionally unclaimed until verified per engine (see ABC note).
+# ASR engines whose ROCm support is verified. Everything else must stay
+# unclaimed: CTranslate2 (whisperx, faster-whisper*) has no HIP build in the
+# pinned 4.4.0, NeMo is actively broken on ROCm (NVIDIA-NeMo/Speech#15905),
+# and sherpa/moonshine/openai-compat are CPU or remote runtimes.
+_ROCM_VERIFIED = {"pytorch-whisper"}
+
+
+def test_only_verified_asr_engines_claim_rocm():
+    """ROCm stays unclaimed until verified per engine (see ABC note).
+
+    pytorch-whisper is verified: whisper-small ran through this pipeline on an
+    RX 6800M (gfx1031) and transcribed at 0% WER — AMD/testing.md §4.3.
+    """
     for engine_id in _EXPECTED:
-        assert "rocm" not in _cls(engine_id).gpu_compat
+        compat = _cls(engine_id).gpu_compat
+        if engine_id in _ROCM_VERIFIED:
+            assert "rocm" in compat, f"{engine_id} lost its verified rocm claim"
+        else:
+            assert "rocm" not in compat, (
+                f"{engine_id} claims rocm without verification — add it to "
+                f"_ROCM_VERIFIED only with evidence it runs on HIP"
+            )
 
 
 def test_nemo_parakeet_has_no_cuda_gate(monkeypatch):

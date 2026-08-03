@@ -514,7 +514,13 @@ class OmniVoiceBackend(TTSBackend):
 
     id = "omnivoice"
     display_name = "OmniVoice (600 languages, zero-shot)"
-    gpu_compat = ("cuda", "mps", "cpu")
+    # ROCm verified end-to-end on an RX 6800M (gfx1031) under Windows: model
+    # load, synthesis, and a Whisper round-trip of the output at 0% WER, 464x
+    # faster than the same render on CPU (AMD/testing.md §4). ROCm-on-HIP
+    # presents through ``torch.cuda``, so the loader already puts this engine
+    # on the GPU — without the claim, resolve_routing() reported cpu_fallback
+    # and warned on every generation while the GPU was doing the work.
+    gpu_compat = ("cuda", "rocm", "mps", "cpu")
     # Derived from the pool's own per-job budget (_GPU_VRAM_PER_JOB_GB = 5.0 in
     # model_manager, itself measured from the ~1.6 GB forward + autoregressive
     # decode and the co-loaded WhisperX on the clone path), plus room for the
@@ -785,7 +791,9 @@ class VoxCPM2Backend(TTSBackend):
     display_name = "VoxCPM2 (30 langs, studio 48 kHz, voice design)"
     supports_voice_design = True
     applies_own_mastering = True  # native 48 kHz studio output — skip apply_mastering()
-    gpu_compat = ("cuda", "mps", "cpu")
+    # In-process, device-agnostic PyTorch — the same code path that reaches
+    # CUDA reaches HIP, with no ROCm-specific branch to get wrong.
+    gpu_compat = ("cuda", "rocm", "mps", "cpu")
 
     def __init__(self):
         self._model = None
@@ -954,7 +962,9 @@ class MossTTSNanoBackend(TTSBackend):
 
     id = "moss-tts-nano"
     display_name = "MOSS-TTS-Nano (20 langs, CPU realtime, 48 kHz)"
-    gpu_compat = ("cuda", "cpu")
+    # In-process, device-agnostic PyTorch → ROCm rides the same torch.cuda
+    # path as CUDA. No MPS claim (unchanged — upstream documents CUDA/CPU).
+    gpu_compat = ("cuda", "rocm", "cpu")
 
     def __init__(self):
         self._model = None
@@ -1494,7 +1504,9 @@ class CosyVoiceBackend(TTSBackend):
     display_name = "CosyVoice 3 (9 langs, zero-shot, instruct, Apache-2.0)"
     # CosyVoice's official inference path expects CUDA; CPU works but slow.
     # MPS support not verified upstream — flagged for Phase 6 confirmation.
-    gpu_compat = ("cuda", "cpu")
+    # ROCm claimed: the "expects CUDA" path IS the HIP path (ROCm presents
+    # through torch.cuda), so an AMD host runs the same code CUDA does.
+    gpu_compat = ("cuda", "rocm", "cpu")
 
     # CosyVoice language tags used for cross-lingual synthesis.
     LANG_TAGS = {
