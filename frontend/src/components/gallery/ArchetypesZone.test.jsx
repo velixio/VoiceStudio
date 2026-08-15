@@ -133,4 +133,35 @@ describe('ArchetypeCard accessibility', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Set as Audiobook default' }));
     expect(onUseAsAudiobookDefault).toHaveBeenCalledWith(archetype);
   });
+
+  it('labels an accent without representing it with a country flag', () => {
+    const { container } = render(
+      <ArchetypeCard
+        a={{
+          id: 'librarian',
+          name: 'The Librarian',
+          language: 'English',
+          use_case: 'narration',
+          facets: {
+            gender: 'female',
+            age: 'middle aged',
+            pitch: 'low pitch',
+            accent: 'british accent',
+          },
+          attrs: {},
+        }}
+        t={t}
+        isFavorite={false}
+        isPlaying={false}
+        isLoadingPreview={false}
+        onPreview={vi.fn()}
+        onUse={vi.fn()}
+        onDesign={vi.fn()}
+        onToggleFavorite={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('British')).toBeInTheDocument();
+    expect(container.querySelector('.accent-flag')).toBeNull();
+  });
 });

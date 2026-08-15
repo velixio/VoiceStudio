@@ -3,7 +3,6 @@ import { BookOpen, Ellipsis, Headphones, Loader, Play, Star, UserPlus, Wand2 } f
 import { Menu } from '../../ui';
 import {
   ArchetypeAvatar,
-  AccentFlag,
   NowPlaying,
   USE_CASE_COLOR,
 } from '../../utils/archetypeIcons';
@@ -91,8 +90,7 @@ export default function ArchetypeCard({
       {hasChips && (
         <div className="flex flex-wrap items-center gap-[5px]">
           {accentLabel && (
-            <span className="inline-flex items-center gap-[5px] pl-[5px] pr-[8px] py-[2px] rounded-[7px] bg-[var(--color-bg-elev-2)] text-[var(--color-fg-muted)] text-[0.64rem] leading-[1.6]">
-              <AccentFlag accent={a.facets.accent} lang={a.language} size={14} />
+            <span className="inline-flex items-center px-[8px] py-[2px] rounded-[7px] bg-[var(--color-bg-elev-2)] text-[var(--color-fg-muted)] text-[0.64rem] leading-[1.6]">
               {accentLabel}
             </span>
           )}
